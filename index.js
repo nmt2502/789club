@@ -13,11 +13,18 @@ const HISTORY_LIMIT = 50;
 let history = [];
 
 // =======================
+// STATE THEO PHIÊN (QUAN TRỌNG)
+// =======================
+let lastPhien = null;
+let cachedVip = null;
+
+// =======================
 // HELPER
 // =======================
 const ketQuaTuTong = (tong) => (tong <= 10 ? "Xỉu" : "Tài");
 
 function taoDoanVi(duDoan) {
+  if (!duDoan) return [];
   const map = {
     "Xỉu": [3, 4, 5, 6, 7, 8, 9, 10],
     "Tài": [11, 12, 13, 14, 15, 16, 17, 18]
@@ -57,72 +64,46 @@ function detectCauPattern(history) {
 
   const last = streaks.slice(-3);
 
-  // 1-1
   if (last.length >= 2 && last[0].len === 1 && last[1].len === 1) {
-    return {
-      type: "Cầu 1-1",
-      predict: last[1].side === "Tài" ? "Xỉu" : "Tài",
-      bonus: 15
-    };
+    return { type: "Cầu 1-1", predict: last[1].side === "Tài" ? "Xỉu" : "Tài", bonus: 15 };
   }
 
-  // 1-2-1
   if (last.length === 3 && last[0].len === 1 && last[1].len === 2 && last[2].len === 1) {
-    return {
-      type: "Cầu 1-2-1",
-      predict: last[2].side,
-      bonus: 18
-    };
+    return { type: "Cầu 1-2-1", predict: last[2].side, bonus: 18 };
   }
 
-  // 1-2-3
   if (last.length === 3 && last[0].len === 1 && last[1].len === 2 && last[2].len === 3) {
-    return {
-      type: "Cầu 1-2-3",
-      predict: last[2].side,
-      bonus: 22
-    };
+    return { type: "Cầu 1-2-3", predict: last[2].side, bonus: 22 };
   }
 
-  // 3-2-1
   if (last.length === 3 && last[0].len === 3 && last[1].len === 2 && last[2].len === 1) {
-    return {
-      type: "Cầu 3-2-1",
-      predict: last[1].side === "Tài" ? "Xỉu" : "Tài",
-      bonus: 25
-    };
+    return { type: "Cầu 3-2-1", predict: last[1].side === "Tài" ? "Xỉu" : "Tài", bonus: 25 };
   }
 
-  // 1-2-5 (VIP)
   if (last.length === 3 && last[0].len === 1 && last[1].len === 2 && last[2].len >= 5) {
-    return {
-      type: "Cầu 1-2-5 (VIP)",
-      predict: last[2].side === "Tài" ? "Xỉu" : "Tài",
-      bonus: 30
-    };
+    return { type: "Cầu 1-2-5 (VIP)", predict: last[2].side === "Tài" ? "Xỉu" : "Tài", bonus: 30 };
   }
 
   return null;
 }
 
 // =======================
-// VIP PREDICT
+// VIP PREDICT (KHÔNG ĐỔI)
 // =======================
 function vipPredict() {
-  // fallback khi ít dữ liệu
   if (history.length < 6) {
     const last = history[history.length - 1];
     return {
-      du_doan: last.ket_qua,
+      du_doan: last?.ket_qua || "Xỉu",
       do_tin_cay: 50,
       note: "VIP khởi tạo (fallback)"
     };
   }
 
-  // ưu tiên cầu
   const cau = detectCauPattern(history);
+  const lastTong = history[history.length - 1].tong;
+
   if (cau) {
-    const lastTong = history[history.length - 1].tong;
     return {
       du_doan: cau.predict,
       do_tin_cay: tinhDoTinCay(lastTong, cau.bonus),
@@ -130,16 +111,12 @@ function vipPredict() {
     };
   }
 
-  // trend thường
   const last10 = history.slice(-10);
   const tai = last10.filter(i => i.ket_qua === "Tài").length;
   const xiu = last10.filter(i => i.ket_qua === "Xỉu").length;
 
-  const duDoan = tai >= xiu ? "Tài" : "Xỉu";
-  const lastTong = history[history.length - 1].tong;
-
   return {
-    du_doan: duDoan,
+    du_doan: tai >= xiu ? "Tài" : "Xỉu",
     do_tin_cay: tinhDoTinCay(lastTong, 10),
     note: "Theo cầu thường"
   };
@@ -158,10 +135,15 @@ app.get("/api/789/vip", async (req, res) => {
     const tong = x1 + x2 + x3;
     const ket_qua = ketQuaTuTong(tong);
 
-    history.push({ tong, ket_qua });
-    if (history.length > HISTORY_LIMIT) history.shift();
+    // chỉ thêm history khi qua phiên mới
+    if (data.phien !== lastPhien) {
+      history.push({ tong, ket_qua });
+      if (history.length > HISTORY_LIMIT) history.shift();
 
-    const vip = vipPredict();
+      cachedVip = vipPredict();
+      cachedVip.dudoan_vi = taoDoanVi(cachedVip.du_doan);
+      lastPhien = data.phien;
+    }
 
     res.json({
       phien: data.phien,
@@ -171,10 +153,10 @@ app.get("/api/789/vip", async (req, res) => {
       tong,
       ket_qua,
       phien_hien_tai: data.phien + 1,
-      du_doan: vip.du_doan,
-      dudoan_vi: taoDoanVi(vip.du_doan),
-      do_tin_cay: vip.do_tin_cay,
-      vip_note: vip.note
+      du_doan: cachedVip.du_doan,
+      dudoan_vi: cachedVip.dudoan_vi,
+      do_tin_cay: cachedVip.do_tin_cay,
+      vip_note: cachedVip.note
     });
 
   } catch (err) {
